@@ -1830,9 +1830,53 @@ function saveP(){try{localStorage.setItem(K_PROF,JSON.stringify(P));}catch(e){}}
 function saveL0(){try{localStorage.setItem(K_L0,JSON.stringify(L0));}catch(e){}}
 function flush(){
   if(BUF.length){
-    if(window.GLIM_DB)BUF.forEach(function(row){GLIM_DB.event('glim_l0_events',SID,P.session,row);});
-    L0=L0.concat(BUF);BUF=[];
+    // 전송 전에 현재 스테이지의 문제 기록을 복사
+    var stageRows = BUF.slice();
+
+    if(window.GLIM_DB){
+      var first = stageRows[0];
+
+      GLIM_DB.event(
+        'glim_l0_events',
+        SID,
+        P.session,
+        {
+          kind: 'stage_trials',
+
+          // 스테이지 기본 정보
+          sid: SID,
+          session: P.session,
+          stage: first ? first.st : null,
+          set: first ? first.set : null,
+
+          // 스테이지 결과 요약
+          trial_count: stageRows.length,
+          correct_count: stageRows.filter(function(row){
+            return row.ok === 1;
+          }).length,
+          wrong_count: stageRows.filter(function(row){
+            return row.ok !== 1;
+          }).length,
+
+          accuracy: stageRows.length
+            ? stageRows.filter(function(row){
+                return row.ok === 1;
+              }).length / stageRows.length
+            : 0,
+
+          // 문제별 상세 기록 전체
+          trials: stageRows,
+
+          saved_at: Date.now()
+        }
+      );
+    }
+
+    // 브라우저 내부 분석용 원본은 기존처럼 유지
+    L0 = L0.concat(stageRows);
+    BUF = [];
   }
+
   saveL0();
 }
 function dropBuffer(){ BUF=[]; }
