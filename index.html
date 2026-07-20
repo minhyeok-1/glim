@@ -1755,8 +1755,80 @@ window.GLIM_DB = (function(){
   function request(path,method,body,prefer){return fetch((CFG.url||'').replace(/\/$/,'')+'/rest/v1/'+path,{method:method||'POST',headers:headers(prefer),body:body==null?null:JSON.stringify(body)}).then(function(r){if(r.status===409)return true;/* PK 중복 = 이미 저장됨으로 간주 */if(!r.ok)return r.text().then(function(t){throw new Error('Supabase '+r.status+': '+t.slice(0,300));});return true;});}
   function enqueue(table,row){if(!enabled()||!row)return;var q=readQ();q.push({id:uuid(),table:table,row:row,tries:0,at:Date.now()});if(q.length>10000)q=q.slice(q.length-10000);writeQ(q);schedule(50);}
   function schedule(ms){if(!enabled()||timer)return;timer=setTimeout(function(){timer=null;flush();},ms||250);}
-  function flush(){if(!enabled()||busy||!navigator.onLine)return Promise.resolve(false);var q=readQ();if(!q.length)return Promise.resolve(true);busy=true;var item=q[0],row=Object.assign({event_id:item.id,device_id:deviceId()},item.row);return request(item.table,'POST',row,'return=minimal').then(function(){var now=readQ(),i=now.findIndex(function(x){return x.id===item.id;});if(i>=0)now.splice(i,1);writeQ(now);busy=false;schedule(10);return true;}).catch(function(err){var now=readQ(),i=now.findIndex(function(x){return x.id===item.id;});if(i>=0){now[i].tries=(now[i].tries||0)+1;now[i].last_error=String(err.message||err).slice(0,300);writeQ(now);}busy=false;schedule(Math.min(60000,1000*Math.pow(2,Math.min(6,item.tries||0))));return false;});}
-  function setStudent(sid){currentSid=String(sid||'');event('glim_sessions',currentSid,String(Date.now()),{kind:'login',at:Date.now()});}
+function flush(){
+  if(!enabled() || busy || !navigator.onLine){
+    return Promise.resolve(false);
+  }
+
+  var q = readQ();
+
+  if(!q.length){
+    return Promise.resolve(true);
+  }
+
+  busy = true;
+
+  var item = q[0];
+
+  var row = Object.assign(
+    {
+      event_id: item.id,
+      device_id: deviceId()
+    },
+    item.row
+  );
+
+  return request(
+    item.table + '?on_conflict=event_id',
+    'POST',
+    row,
+    'resolution=ignore-duplicates,return=minimal'
+  ).then(function(){
+    var now = readQ();
+
+    var i = now.findIndex(function(x){
+      return x.id === item.id;
+    });
+
+    if(i >= 0){
+      now.splice(i, 1);
+    }
+
+    writeQ(now);
+    busy = false;
+    schedule(10);
+
+    return true;
+  }).catch(function(err){
+    var now = readQ();
+
+    var i = now.findIndex(function(x){
+      return x.id === item.id;
+    });
+
+    if(i >= 0){
+      now[i].tries = (now[i].tries || 0) + 1;
+      now[i].last_error =
+        String(err.message || err).slice(0, 300);
+
+      writeQ(now);
+    }
+
+    busy = false;
+
+    schedule(
+      Math.min(
+        60000,
+        1000 * Math.pow(
+          2,
+          Math.min(6, item.tries || 0)
+        )
+      )
+    );
+
+    return false;
+  });
+}  function setStudent(sid){currentSid=String(sid||'');event('glim_sessions',currentSid,String(Date.now()),{kind:'login',at:Date.now()});}
   function event(table,sid,session,payload){enqueue(table,{student_id:String(sid||currentSid||''),session_id:String(session||''),payload:payload||{}});}
   function profile(sid,session,payload){if(!enabled()||!sid)return;clearTimeout(profile._t);profile._t=setTimeout(function(){request('glim_profiles?on_conflict=student_id','POST',{student_id:String(sid),device_id:deviceId(),session_id:String(session||''),profile:payload,updated_at:new Date().toISOString()},'resolution=merge-duplicates,return=minimal').catch(function(){});},700);}
   window.addEventListener('online',function(){schedule(10);});window.addEventListener('pagehide',function(){flush();});if(enabled())schedule(100);
